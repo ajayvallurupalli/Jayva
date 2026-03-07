@@ -32,7 +32,6 @@ void cullSyntax(Syntax* syntax, SyntaxEnv* env, int cullChildren, int freeOnDele
 	printf("syntax culling %s children, %s: \n", cullChildren ? "with" : "without", freeOnDeletion ? "freeing" : "not freeing");
 	showSyntax(syntax, 1);
 
-	printf("test\n");
 	if (syntax->type == FunctionST || syntax->type == SymbolST) {
 		recurse = env->map;
 		found = NULL;
@@ -219,7 +218,7 @@ MacroResult runMacroDict(MacroDict* macros, Syntax* ast, SyntaxEnv* env) {
 		current = macros;
 
 		while (current) {
-			if (matchPattern(ast->value.function.symbol.name, current->macro.name)) {
+			if (matchPatternStrict(ast->value.function.symbol.name, current->macro.name)) {
 				printf("Matched macro %s\n", current->macro.name);
 				result = runMacro(ast, &current->macro, macros, env);
 				current = NULL;

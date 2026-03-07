@@ -18,6 +18,7 @@ void consLinkedListByRef(LinkedList* list, void* val);
 
 void* getElementOfLinkedList(LinkedList* list, void* context, int (*pred) (void*, void*));
 void mapLinkedList(LinkedList* list, void (*map) (void*));
+void forEachLinkedList(const LinkedList* list, void (*map) (const void*));
 
 void reverseLinkedList(LinkedList* list);
 

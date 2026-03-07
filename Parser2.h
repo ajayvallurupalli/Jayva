@@ -141,7 +141,7 @@ typedef struct Parser {
 } Parser;
 
 /* Pretty Print for the Parser */
-void showParser(Parser p);
+void showParser(const Parser p);
 
 /* Pretty Print for the Parser, for void*. useful for mapLinkedList */
 void showParserVoid(void* willBeParser);
@@ -150,6 +150,7 @@ void showParserVoid(void* willBeParser);
  *  0 if the string does not match the pattern
  *  n if the string does match the pattern, where n is the length of the pattern*/
 int matchPattern(char* match, char* pattern);
+int matchPatternStrict(char* match, char* pattern);
 
 /* Default index for all mk_ functions is -1, it must be properly registered in a 
  * ParserEnvironment before it can be actually used. 
@@ -199,7 +200,7 @@ typedef struct ParserEnvironment {
 } ParserEnvironment;
 
 /* shows all registered parsers*/
-void showParsers(ParserEnvironment* env);
+void showParsers(const ParserEnvironment* env);
 /* registers parser in environment, and returns its respective index*/
 ParserIndex registerParser(ParserEnvironment* env, Parser parser);
 /* creates `ParserEnvironment` and registers starting `Err` parsrs 
@@ -208,8 +209,6 @@ ParserEnvironment mkParserEnvironment();
 /* adds state to the parser, using the copy function to deal with branching possibilities
  * initialState will be given in the specific parsing functions*/
 void addStateToParserEnvironment(ParserEnvironment* env, void* (*copy)(void*));
-/* enables a really specific keep flag, see AltList for more*/
-void enableKeepFlagToParserEnvironment(ParserEnvironment* env);
 /* relies on ParserEnvrionment.forward which is only guarenteed to be accurate for
  * Satisfy.pred, so only use it for that predicate
  * TODO: add ability to search forward more. will require a length part of ParserEnvironment to ensure safety*/
@@ -250,7 +249,7 @@ typedef struct {
 } ParsingResult;
 
 /* Prints a ParsingResult, using `showSuccess` parameter for showing the void* in success*/
-void showParsingResult(ParsingResult shower, void (*showSuccess) (void*));
+void showParsingResult(const ParsingResult shower, void (*showSuccess) (const void*));
 
 /* runs a Parser for words, starting at index cursor, until a Pure value or an Err.
  * If its Pure, it returns ParserSuccess from the 
@@ -274,7 +273,7 @@ typedef struct {
 } ParseSequenceResult;
 
 /* needs show for value, to be mapped over linked list*/
-void showParsingSequenceResult(ParseSequenceResult shower, void (*showSuccess) (void*));
+void showParsingSequenceResult(const ParseSequenceResult shower, void (*showSuccess) (const void*));
 
 /* Parses until it runs into an error, or the text ends.
  * if it succeeded at least one time, it will return a success with all accumulated successes

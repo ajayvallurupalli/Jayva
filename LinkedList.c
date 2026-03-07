@@ -67,6 +67,10 @@ void mapLinkedList(LinkedList* list, void (*map) (void*)) {
 	_mapCons(list->list, map);
 }
 
+void forEachLinkedList(const LinkedList* list, void (*map) (const void*)) {
+	_mapCons(list->list, (void (*)(void*)) map);
+}
+
 Cons* reverseLinkedListGo(Cons* main, Cons* prev) {
 	Cons* result;
 	if (main->next) result = reverseLinkedListGo(main->next, main);

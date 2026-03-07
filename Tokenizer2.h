@@ -27,8 +27,8 @@ typedef struct {
 	} value;
 } Token;
 
-void showToken(Token t);
-void showTokenVoid(void* willBeToken);
+void showToken(const Token t);
+void showTokenVoid(const void* willBeToken);
 void freeToken(void* willBeToken);
 
 /* if it succeeds, the success value will be a linkedList with the tokens*/

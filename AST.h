@@ -46,7 +46,8 @@ typedef struct Syntax {
         } value;
 } Syntax;
 
-void showSyntax(Syntax* syntax, int depth);
+void showSyntax(const Syntax* syntax, int depth);
+void showUnAST(Syntax* syntax, int newline);
 Syntax* mkStringST(char* value);
 Syntax* mkNumberST(long value);
 
@@ -91,7 +92,7 @@ typedef struct {
         } value;
 } ProcessResult;
 
-void showProcessResult(ProcessResult* pr);
+void showProcessResult(const ProcessResult* pr);
 
 /* create the environment with mkSyntaxEnv
  * and tokens with tokenize from Tokenizer.c*/
@@ -117,7 +118,7 @@ typedef struct {
         } value;
 } SyntaxResult;
 
-void showSyntaxResult(SyntaxResult* sr);
+void showSyntaxResult(const SyntaxResult* sr);
 SyntaxResult buildAST(char* words, SyntaxEnv* env);
 
 #endif

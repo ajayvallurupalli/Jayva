@@ -6,7 +6,7 @@
 #include "Parser2.h"
 #include "Config.h"
 
-void showParser(Parser p) {
+void showParser(const Parser p) {
 	switch (p.type) {
 		case PureAlgebra:
 			printf("[Pure@%d]\n", p.index);
@@ -143,7 +143,7 @@ Parser mkReset(ParserIndex next, void (*effect) (void*, String*)) {
 	return result;
 }
 
-void showParsers(ParserEnvironment* env) {
+void showParsers(const ParserEnvironment* env) {
 	if (!env->parsers) {
 		printf("Parser Environment has not yet been configured.\n");
 	} else {
@@ -153,7 +153,7 @@ void showParsers(ParserEnvironment* env) {
 }
 
 #ifdef PARSER_STATISTICS 
-void showParserStatistics(ParserStatistics stats) {
+void showParserStatistics(const ParserStatistics stats) {
 	printf("---Parsers  Executed: %d ---\n", stats.parsersExecuted);
         printf("---Branches Executed: %d ---\n", stats.branchesExecuted);
 }
@@ -200,10 +200,6 @@ ParserEnvironment mkParserEnvironment() {
 
 void addStateToParserEnvironment(ParserEnvironment* env, void* (*copy)(void*)) {
 	env->copy = copy;
-}
-
-void enableKeepFlagToParserEnvironment(ParserEnvironment* env) {
-	env->keepState = TRUE; /* yep thats it*/
 }
 
 /* relies on ParserEnvrionment.forward which is only guarenteed to be accurate for
@@ -260,7 +256,7 @@ void freeParserEnvironment(ParserEnvironment* env) {
 	env->parsers = NULL;
 }
 
-void showParsingResult(ParsingResult shower, void (*showSuccess) (void*)) {
+void showParsingResult(const ParsingResult shower, void (*showSuccess) (const void*)) {
 	switch (shower.type) {
 		case ParsingError:
 			printf("Parsing failed with error: %s\n", shower.value.error);
@@ -289,6 +285,24 @@ int matchPattern(char* match, char* pattern) {
 	}
 
 	return index;
+}
+
+/* 0 if the string does not match the pattern
+ * n if the string completely matches the pattern, where n = length of pattern = length of match*/
+int matchPatternStrict(char* match, char* pattern) {
+	int index = 0;
+	int fail = FALSE;
+	int loop = TRUE;
+	while (loop) {
+		if (match[index] == '\0' && pattern[index] == '\0') loop = FALSE;
+		else if (match[index] == pattern[index]) index++;
+	 	else {
+			fail = TRUE;
+			loop = FALSE;
+		}
+	}
+
+	return fail ? 0 : index;
 }
 
 /* camel case is kinda ugly here*/
@@ -489,14 +503,14 @@ ParsingResult runParserWithState(ParserEnvironment* env, ParserIndex parser, cha
 	return result;
 }
 
-void showParsingSequenceResult(ParseSequenceResult shower, void (*showSuccess) (void*)) {
+void showParsingSequenceResult(const ParseSequenceResult shower, void (*showSuccess) (const void*)) {
 	switch (shower.type) {
 		case ParsingError:
 			printf("Parsing failed with error: %s\n", shower.value.error);
 			break;
 		case ParsingSuccess:
 			printf("Parsing succeeded with value: \n");
-			mapLinkedList(&shower.value.success, showSuccess);
+			forEachLinkedList(&shower.value.success, showSuccess);
 			printf("\n");
 			break;
 	}
@@ -643,10 +657,6 @@ ParserIndex takeAsGiven(ParserEnvironment* env) {
 	return registerParser(env, mkPure(&takeAsGivenParse));
 }
 
-void showIntVoid(void* actuallyAnInt) {
-	printf("%d", *(int*) actuallyAnInt);
-}
-
 void* parseAsInt(void* _state, String* string) {
 	int* result = malloc(sizeof(int));
 	int  digit  = 0;
@@ -734,8 +744,7 @@ int parser2main() {
 	
 	printf("---Parsing---\n");
 	ParsingResult result = runParser(&env, altListTest, words, 0);
-
-	showParsingResult(result, &showIntVoid);
+	(void) result;
 
 	freeParserEnvironment(&env);
 

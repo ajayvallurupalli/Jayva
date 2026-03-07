@@ -2,7 +2,7 @@
 #include "Parser2.h"
 #include "AST.h"
 
-void showSyntax(Syntax* syntax, int depth) {
+void showSyntax(const Syntax* syntax, int depth) {
 	int i;
 	
 	for (i = 0; i < depth; i++) printf("\t");
@@ -55,6 +55,35 @@ void freeSyntaxVoid(void* futureSyntax) {
 	free(syntax);
 }
 
+void showUnAST(Syntax* syntax, int newline) {
+	int i;
+
+	switch (syntax->type) {
+		case StringST:
+			printf("\"%s\"", syntax->value.string);
+			break;
+		case NumberST:
+			printf("%ld", syntax->value.number);
+			break;
+		case AtomST:
+			printf("\'%s", syntax->value.atom.name);
+			break;
+		case SymbolST:
+			printf("%s", syntax->value.symbol.name);
+			break;
+		case FunctionST:
+			printf("(%s", syntax->value.function.symbol.name);
+			for (i = 0; i < syntax->value.function.argumentCount; i++) { 
+				printf(" ");
+				showUnAST(syntax->value.function.arguments[i], FALSE);
+			}
+			printf(")");
+			break;
+	}
+
+	if (newline) printf("\n");
+}
+
 SyntaxEnv mkSyntaxEnv() {
 	SyntaxEnv result;
 	result.map = NULL;
@@ -90,7 +119,7 @@ Symbol findOrRegisterGo(SyntaxEnv* env, SyntaxMap* map, char** search, SymbolTyp
 	SyntaxMap* newMap;
 	Symbol result;
 
-	if (type == map->symbol.type && matchPattern(map->symbol.name, *search) > 0) {
+	if (type == map->symbol.type && matchPatternStrict(map->symbol.name, *search)) {
 		result = map->symbol;
 		if (incr) map->references++;
 		if (plsFree) {
@@ -192,7 +221,7 @@ Syntax* mkFunctionST(char** name, int argumentCount, SyntaxEnv* env, int plsFree
 	return result;
 }
 
-void showProcessResult(ProcessResult* pr) {
+void showProcessResult(const ProcessResult* pr) {
 	switch (pr->type) {
 		case ProcessSuccess:
 			printf("Syntax process succeeded with value: \n");
@@ -337,7 +366,7 @@ ProcessResult processTokens(Cons* tokens, SyntaxEnv* env) {
 	return _processTokens(tokens, NULL, env);
 }
 
-void showSyntaxResult(SyntaxResult* sr) {
+void showSyntaxResult(const SyntaxResult* sr) {
 	switch (sr->type) {
 		case TokenError:
 			printf("Tokenization error: %s\n", sr->value.tokenError);
@@ -386,10 +415,11 @@ SyntaxResult buildAST(char* words, SyntaxEnv* env) {
 		printf("failed at end!\n");
 		result.type = SyntaxError;
 		strcpy(result.value.syntaxError, recent.value.error);
+		
+		/* need to free all here, since all has failed*/
 		mapLinkedList(&accum, &freeSyntaxVoid);
 		mapLinkedList(&tokenResult.value.success, &freeToken);
 		freeLinkedListInners(&tokenResult.value.success);
-		/* need to free here*/
 	} else {
 		result.type = SyntaxSuccess;
 		result.value.success.syntaxesLength = syntaxes;
@@ -400,11 +430,15 @@ SyntaxResult buildAST(char* words, SyntaxEnv* env) {
 			result.value.success.syntaxes[i] = ((Syntax*) tokens->val);
 			tokens = tokens->next;
 		}
+
+		/* free just the tokens, but not their innner values
+		 * since they have been commandeered by Syntax*/
+		mapLinkedList(&tokenResult.value.success, &free);
+		freeLinkedListInners(&tokenResult.value.success);
 	}
 
 
 	freeLinkedListInners(&accum);
-
 
 	#ifdef DEBUG
 	showSyntaxResult(&result);

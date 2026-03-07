@@ -5,7 +5,7 @@
 #include "LinkedList.h"
 #include "Config.h"
 
-void showToken(Token t) {
+void showToken(const Token t) {
 	switch (t.type) {
 		case StringToken:
 			printf("[String: %s]\n", t.value.string);
@@ -29,7 +29,7 @@ void showToken(Token t) {
 }
 
 
-void showTokenVoid(void* willBeToken) {
+void showTokenVoid(const void* willBeToken) {
 	if (!willBeToken) {
 		printf("[Token:NULL]\n");
 	} else showToken(*(Token*) willBeToken); 
@@ -57,7 +57,6 @@ void freeToken(void* willBeToken) {
 			break;
 	}
 	if (token) free((Token*) willBeToken);
-	willBeToken = NULL;
 }
 
 void* parseParenthesis(void* _state, String* string) {
