@@ -2,3 +2,4 @@
 *.swo
 Types.c
 main.dSYM
+*.[xo]

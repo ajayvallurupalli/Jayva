@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include "LinkedList.h"
 #include "String.h"
 #include "Parser2.h"
@@ -538,7 +537,7 @@ ParseSequenceResult runParserUntil(ParserEnvironment* env, ParserIndex parser, c
 	}
 	loopEnd:;
 
-	if (successCount && !(strict && recentResult.type == ErrAlgebra)) {
+	if (successCount && !(strict && recentResult.type == ParsingError && words[env->cursor] != '\0')) {
 		result.type = ParsingSuccess;
 		result.value.success = successes;
 	} else {
@@ -587,7 +586,7 @@ ParseSequenceResult runParserUntilWithState(ParserEnvironment* env, ParserIndex 
 
 	freeString(&plate);
 
-        if (successCount && !(strict && recentResult.type == ErrAlgebra)) {
+        if (successCount && !(strict && recentResult.type == ParsingError && words[env->cursor] != '\0')) {
                 result.type = ParsingSuccess;
                 result.value.success = successes;
         } else {
@@ -680,8 +679,7 @@ ParserIndex pureInt(ParserEnvironment* env) {
 }
 
 int isDigitPred(ParserEnvironment* _env, void* _context, char ch) {
-	int ascii = (int) ch - (int) '0';
-	return ascii >= -1 && ascii <= 9;
+	return ch >= '0' && ch <= '9';
 }
 
 ParserIndex numbers(ParserEnvironment* env, int eat, ParserIndex success) {

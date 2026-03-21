@@ -73,6 +73,7 @@ Syntax* mkFunctionST(char** value, int argumentCount, SyntaxEnv* env, int plsFre
 
 
 void showSyntaxEnv(SyntaxEnv* env);
+void freeSyntaxEnv(SyntaxEnv* env);
 SyntaxEnv mkSyntaxEnv();
 /* returns the corresponding symbol to the SyntaxEnv, 
  * or adds it if it's not a member

@@ -2,70 +2,8 @@
 #include "Macro.h"
 #include "Macros.h"
 #include "AST.h"
+#include "Interpret.h"
 
-#define PRIMITIVE_FORCE_INDEX 0
-#define PRIMITIVE_DEFINE_INDEX 1
-#define PRIMITIVE_LAMBDA_INDEX 2
-#define PRIMITIVE_IF_INDEX 3
-#define PRIMITIVE_TRUE_INDEX 4
-#define PRIMITIVE_FALSE_INDEX 5
-#define UNLIMITED_ARGS (-1)
-
-
-/* like the 5th tagged union at this point?
- * idk it its too repetitive but it does work well
- * as a design pattern*/
-typedef enum {
-	NumberValue,
-	StringValue,
-	AtomValue,
-	FunctionValue,
-	LazyValue
-} ValueType;
-
-struct Value;
-
-typedef enum {
-	InternalFunction,
-	UserDefinedFunction
-} FunctionType;
-
-typedef enum {
-	FunctionSuccess,
-	FunctionError
-} FunctionResult;
-
-/* first Value* is where the result should be written to, char* is where error is written
- * this allows us to keep memory allocated on the stack 
- * kind of innovative idea i just invented (first person in the world likely)
- * will be interesting to see if this trick could be used for optimizations in Syntax
- * but I think its already pretty efficent because it commandeers memory (mostly)
- * but maybe macros would benefit?*/
-typedef FunctionResult (*RunInternal) (struct Value*, char**, struct Value*, int length);
-
-typedef struct {
-	FunctionType type;
-	int args; /* if args < 0, takes unlimited*/
-	int macro;
-	union {
-		RunInternal internal;
-		Syntax*     userDefined;
-	} value;
-} FunctionVal;
-
-/* note: Value struct is the actual value, while
- * so FunctionST of Syntax describes the syntax of a function
- * while FunctionValue of Value describes its execution*/
-typedef struct Value {
-	ValueType type;
-	union {
-		long        number;
-		String      string;
-		SymbolIndex atom;
-		FunctionVal function;
-		Syntax*     lazy;
-	} value;
-} Value;
 
 Value mkInternalFunction(int macro, int args, RunInternal internal) {
 	Value result;
@@ -102,7 +40,7 @@ void showValue(Value* value, int depth) {
 			} else {
 				printf("[FunctionVal{User %s, ast: (\n", \
 						value->value.function.macro ? "Macro" : "Function");
-				showSyntax(value->value.function.value.userDefined, depth + 1);
+				showSyntax(value->value.function.value.userDefined.syntax, depth + 1);
 				for (i = 0; i < depth; i++) printf("\t");
 				printf(")}]\n");
 			}
@@ -119,12 +57,6 @@ int isBoolean(Value v) {
 	return v.type == AtomValue && \
 		       (v.value.atom == PRIMITIVE_TRUE_INDEX || v.value.atom == PRIMITIVE_FALSE_INDEX);
 }
-
-typedef struct SymbolDict {
-	Symbol             symbol;
-	Value              value;
-	struct SymbolDict* next;
-} SymbolDict;
 
 void showSymbolDict(SymbolDict* dict, int depth) {
 	int i;
@@ -152,7 +84,7 @@ void showSymbolDict(SymbolDict* dict, int depth) {
 			} else {
 				printf("[FunctionVal@%d{name: %s, type: User, ast: (\n", \
 						(int) dict->symbol.index, dict->symbol.name);
-				showSyntax(dict->value.value.function.value.userDefined, depth + 1); /* cinema*/
+				showSyntax(dict->value.value.function.value.userDefined.syntax, depth + 1); /* cinema*/
 				for (i = 0; i < depth; i++) printf("\t");
 				printf(")}]\n");
 			}
@@ -178,15 +110,25 @@ SymbolDict mkSymbolDict(Symbol symbol, Value value) {
 	return result;
 }
 
-/* global scope if namepace->outer == NULL*/
-typedef struct Namespace {
-	SymbolDict*       symbols;
-	struct Namespace* outer;
-} Namespace;
+void showNamespace(Namespace* namespace, int depth) {
+	int i; 
+
+	for (i = 0; i < depth; i++) printf("\t");
+	printf("Namespace with %d references containing: \n", namespace->references);
+	if (namespace->symbols && namespace->outer) showSymbolDict(namespace->symbols, depth + 1);
+	else if (namespace->symbols) {
+		for (i = 0; i < depth; i++) printf("\t");
+		printf("[Global Namespace]\n");
+	}
+	if (namespace->outer) showNamespace(namespace->outer, depth);
+}
 
 void addToNamespace(char* name, SymbolType type, Value value, SyntaxEnv* env, Namespace* namespace) {
 	SymbolDict* recurse = namespace->symbols;
-	
+
+	printf("adding: %s to\n", name);
+	showNamespace(namespace, 1);
+		
 	if (!recurse) {
 		namespace->symbols = malloc(sizeof(SymbolDict));
 		*namespace->symbols = mkSymbolDict(findOrRegister(env, &name, type, FALSE, FALSE), value);
@@ -213,20 +155,24 @@ void setNamespace(SymbolIndex index, Value new, Namespace* namespace) {
 }
 
 /* local functional programmer learns how to not use recursion for everything*/
-void freeNamespace(Namespace* namespace, int recursive) {
-	SymbolDict* recurse = namespace->symbols;
-	SymbolDict* next = namespace->symbols; /*basically temp*/
+void freeNamespace(Namespace* namespace) {
+	if (namespace->outer) freeNamespace(namespace->outer);
 
-	while (recurse) {
-		next = recurse->next;
-		free(recurse);
-		recurse = next;
-	} 
+	if (namespace->references == 1) {
+		SymbolDict* recurse = namespace->symbols;
+		SymbolDict* next = namespace->symbols; /*basically temp*/
 
-	if (recursive && namespace->outer) freeNamespace(namespace->outer, recursive);
+		while (recurse) {
+			next = recurse->next;
+			free(recurse);
+			recurse = next;
+		} 
+
+		free(namespace);
+	} else namespace->references--;
 }
 
-FunctionResult runIdentity(Value* write, char** error, Value* values, int length) {
+FunctionResult runIdentity(Value* write, char** error, Value* values, int length, SyntaxEnv* env, Namespace* namespace) {
 	static char* argError = "Identity requires 1 argument";
 
 	if (length < 1) {
@@ -277,14 +223,56 @@ void addIfPrimitive(SyntaxEnv* env, Namespace* namespace) {
 	findOrRegister(env, &_false, AtomSymbol, FALSE, FALSE);
 }
 
+FunctionResult runEquality(Value* success, char** error, Value* values, int length, SyntaxEnv* env, Namespace* namespace) {
+	Value a = values[0];
+	Value b = values[1];
+
+	success->type = AtomValue;
+
+	if (a.type != b.type) \
+		success->value.atom = PRIMITIVE_FALSE_INDEX;
+
+	switch (a.type) {
+		case NumberValue: 
+			success->value.atom = a.value.number == b.value.number ? \
+					      PRIMITIVE_TRUE_INDEX : PRIMITIVE_FALSE_INDEX;
+			break;
+		case FunctionValue: /*we could check pointers but who cares*/
+			success->value.atom = PRIMITIVE_FALSE_INDEX;
+			break;
+		case StringValue:
+			success->value.atom = checkEqualString(a.value.string, b.value.string) ? \
+						PRIMITIVE_TRUE_INDEX : PRIMITIVE_FALSE_INDEX;
+			break;
+		case LazyValue:
+			printf("TODO!!!");
+			/**/
+			break;
+		case AtomValue:
+			success->value.atom = a.value.atom == b.value.atom ? \
+					      PRIMITIVE_TRUE_INDEX : PRIMITIVE_FALSE_INDEX;
+			break;
+	}
+	return FunctionSuccess;
+}
+
+void addEqPrimitive(SyntaxEnv* env, Namespace* namespace) {
+	Value eq = mkInternalFunction(FALSE, 2, &runEquality);
+	static char* name = "eq";
+
+	addToNamespace(name, VariableSymbol, eq, env, namespace);
+}
+
 Namespace* mkBaseNamespace(SyntaxEnv* env) {
 	Namespace* result = malloc(sizeof(Namespace));
-	
+
 	result->outer = NULL;
+	result->references = 1000;
 	addForcePrimitive(env, result);
 	addDefinePrimitive(env, result);
 	addLambdaPrimitive(env, result);
 	addIfPrimitive(env, result);
+	addEqPrimitive(env, result);
 
 	return result;
 }
@@ -306,27 +294,23 @@ SymbolDict* searchNamespace(Namespace* namespace, SymbolIndex search) {
 	else return NULL;
 }
 
-/* in the future I want errors to be more structured like this*/
-typedef struct {
-	int argsExpected;
-	int argsGiven;
-	Syntax* syntax;
-} ArityMismatchError;
+Namespace* mkLocalNamespace(Namespace* outer) {
+	Namespace* result = malloc(sizeof(Namespace));
+	result->references = 1;
+	result->symbols = NULL;
+	result->outer = outer;
 
-typedef struct {
-	enum {
-		InterpretSuccess,
-		UndefinedSymbol,
-		InvalidArgs,
-		ArityMismatch
-	} type;
-	union {
-		Value              success;
-		Syntax*            undefined;
-		char*              invalidArgs;
-		ArityMismatchError arityMismatch;
-	} value;
-} InterpretResult;
+	return result;
+}
+
+void incNamespace(Namespace* outer) {
+	Namespace* recurse = outer;
+
+	while (recurse) {
+		recurse->references++;
+		recurse = recurse->outer;
+	}
+}
 
 void showInterpretResult(InterpretResult* result, int depth) {
 	int i;
@@ -369,7 +353,7 @@ char* getArgumentName(Syntax* function, int index) {
 InterpretResult runFunctionInternal(FunctionVal* function, Syntax* syntax, Namespace* namespace, SyntaxEnv* env, int force) {
 	InterpretResult result;
 	FunctionResult execution;
-        Value* arguments = malloc(sizeof(Value) * syntax->value.function.argumentCount);
+	Value* arguments = malloc(sizeof(Value) * syntax->value.function.argumentCount);
 	Value writeSuccess;
 	char* writeError = NULL;
 	int i;
@@ -378,20 +362,20 @@ InterpretResult runFunctionInternal(FunctionVal* function, Syntax* syntax, Names
 
 	for (i = 0; i < syntax->value.function.argumentCount; i++) {
 		result = interpretSyntax(syntax->value.function.arguments[i], \
-					namespace, env, TRUE);
+				namespace, env, TRUE);
 		if (result.type == InterpretSuccess) arguments[i] = result.value.success;
 		else i = syntax->value.function.argumentCount;
-        }
+	}
 
 	if (result.type == InterpretSuccess) {
-		execution = function->value.internal(&writeSuccess, &writeError, arguments, i);
-                
+		execution = function->value.internal(&writeSuccess, &writeError, arguments, i, env, namespace);
+
 		if (execution == FunctionSuccess) {
-                        result.value.success = writeSuccess;
-                } else {
-                        result.type = InvalidArgs;
-                        result.value.invalidArgs = writeError; /* should be not null now by func*/
-                }
+			result.value.success = writeSuccess;
+		} else {
+			result.type = InvalidArgs;
+			result.value.invalidArgs = writeError; /* should be not null now by func*/
+		}
 	}
 
 	free(arguments);
@@ -399,28 +383,30 @@ InterpretResult runFunctionInternal(FunctionVal* function, Syntax* syntax, Names
 	return result;
 }
 
-InterpretResult runFunctionUser(Syntax* function, Syntax* syntax, Namespace* namespace, SyntaxEnv* env, int force) {
+InterpretResult runFunctionUser(Syntax* function, Namespace* closure, Syntax* syntax, Namespace* runner, SyntaxEnv* env, int force) {
 	InterpretResult result;
 	int i;
 
-	Namespace* new = malloc(sizeof(Namespace));
-	new->symbols = NULL;
-	new->outer = namespace;
-
+	Namespace* new = mkLocalNamespace(closure);
+	
 	for (i = 0; i < syntax->value.function.argumentCount; i++) {
 		result = interpretSyntax(syntax->value.function.arguments[i], \
-				namespace, env, force);
+				runner, env, force);
 		if (result.type == InterpretSuccess) \
 			addToNamespace(getArgumentName(function, i), VariableSymbol, result.value.success, env, new);
 		else i = syntax->value.function.argumentCount;
 	}
 
-	if (result.type == InterpretSuccess) \
-		result = interpretSyntax(function->value.function.arguments[1], new, env, force);
+	printf("function namespace: \n");
+	showNamespace(new, 1);
 
+	i = 1;
+	while (result.type == InterpretSuccess && i < function->value.function.argumentCount) {
+		result = interpretSyntax(function->value.function.arguments[i], new, env, force);
+		i++;
+	}
 
-	freeNamespace(new, FALSE);
-	free(new);
+	freeNamespace(new);
 
 	return result;
 }
@@ -431,7 +417,7 @@ InterpretResult runFunction(FunctionVal* function, SymbolIndex index, Syntax* sy
 	result.type = InterpretSuccess;
 
 	if (function->type == InternalFunction) result = runFunctionInternal(function, syntax, namespace, env, force);
-	else result = runFunctionUser(function->value.userDefined, syntax, namespace, env, force);
+	else result = runFunctionUser(function->value.userDefined.syntax, function->value.userDefined.namespace, syntax, namespace,env, force);
 
 
 	return result;
@@ -468,9 +454,12 @@ InterpretResult interpretLambda(Syntax* syntax, Namespace* namespace, SyntaxEnv*
 	} else {
 		result.type = InterpretSuccess;
 		/* i can't help but feel that the tagged unions are a little too much*/
+		result.value.success.type = FunctionValue;
 		result.value.success.value.function.type = UserDefinedFunction;
 		result.value.success.value.function.args = function->arguments[0]->value.function.argumentCount + 1;
-		result.value.success.value.function.value.userDefined = syntax;
+		result.value.success.value.function.value.userDefined.syntax = syntax;
+		result.value.success.value.function.value.userDefined.namespace = namespace;
+		incNamespace(namespace);
 	}
 
 	return result;
@@ -508,7 +497,7 @@ InterpretResult interpretFunctionST(Syntax* syntax, Namespace* namespace, Syntax
 		result = interpretLambda(syntax, namespace, env);	
 	} else if (index == PRIMITIVE_DEFINE_INDEX) {
 		result = interpretDefine(syntax, namespace, env);	
-	} else if (force || index == PRIMITIVE_FORCE_INDEX) {
+	} else if (force > 0 || index == PRIMITIVE_FORCE_INDEX) {
 		search = searchNamespace(namespace, index);
 		if (!search) {
 			result.type = UndefinedSymbol;
@@ -522,7 +511,6 @@ InterpretResult interpretFunctionST(Syntax* syntax, Namespace* namespace, Syntax
 				result.value.arityMismatch.syntax = syntax;
 			} else {
 				result = runFunction(&search->value.value.function, search->symbol.index, syntax, namespace, env, force);
-		
 			}
 		}
 	} else {
@@ -600,12 +588,12 @@ InterpretResult interpretAST(AST* ast, Namespace* namespace, SyntaxEnv* env) {
 
 	for (i = 0; i < ast->syntaxesLength && result.type == InterpretSuccess; i++) \
 		result = interpretSyntax(ast->syntaxes[i], namespace, env, FALSE);
-	
+
 
 	return result;
 }
 
-FunctionResult addFun(Value* success, char** error, Value* values, int length) {
+FunctionResult addFun(Value* success, char** error, Value* values, int length, SyntaxEnv* env, Namespace* namespace) {
 	int i;
 	long count = 0;
 	static char onlyNums[] = "Cannot add non-numbers";
@@ -625,12 +613,12 @@ FunctionResult addFun(Value* success, char** error, Value* values, int length) {
 
 void insertAdd(SyntaxEnv* env, Namespace* namespace) {
 	Value add = mkInternalFunction(FALSE, UNLIMITED_ARGS, &addFun);
-	
+
 	static char* sym = "+";
 	addToNamespace(sym, VariableSymbol, add, env, namespace);
 }
 
-FunctionResult mulFun(Value* success, char** error, Value* values, int length) {
+FunctionResult mulFun(Value* success, char** error, Value* values, int length, SyntaxEnv* env, Namespace* namespace) {
 	int i; 
 	long count = 1;
 	static char onlyNums[] = "Cannot mul non-numbers";
@@ -648,13 +636,13 @@ FunctionResult mulFun(Value* success, char** error, Value* values, int length) {
 }
 
 void insertMul(SyntaxEnv* env, Namespace* namespace) {
-        Value mul = mkInternalFunction(FALSE, UNLIMITED_ARGS, &mulFun);
+	Value mul = mkInternalFunction(FALSE, UNLIMITED_ARGS, &mulFun);
 
-        static char* sym = "*";
-        addToNamespace(sym, VariableSymbol, mul, env, namespace);
+	static char* sym = "*";
+	addToNamespace(sym, VariableSymbol, mul, env, namespace);
 }
 
-FunctionResult subFun(Value* success, char** error, Value* values, int length) {
+FunctionResult subFun(Value* success, char** error, Value* values, int length, SyntaxEnv* env, Namespace* namespace) {
 	static char onlyNums[] = "Cannot sub non-numbers";
 	FunctionResult result;
 
@@ -671,13 +659,13 @@ FunctionResult subFun(Value* success, char** error, Value* values, int length) {
 }
 
 void insertSub(SyntaxEnv* env, Namespace* namespace) {
-        Value sub = mkInternalFunction(FALSE, 2, &subFun);
+	Value sub = mkInternalFunction(FALSE, 2, &subFun);
 
-        static char* sym = "-";
-        addToNamespace(sym, VariableSymbol, sub, env, namespace);
+	static char* sym = "-";
+	addToNamespace(sym, VariableSymbol, sub, env, namespace);
 }
 
-FunctionResult divFun(Value* success, char** error, Value* values, int length) {
+FunctionResult divFun(Value* success, char** error, Value* values, int length, SyntaxEnv* env, Namespace* namespace) {
 	static char onlyNums[] = "Cannot div non-numbers";
 	static char divZero[] = "Cannot divide by 0";
 	FunctionResult result;
@@ -698,13 +686,13 @@ FunctionResult divFun(Value* success, char** error, Value* values, int length) {
 }
 
 void insertDiv(SyntaxEnv* env, Namespace* namespace) {
-        Value div = mkInternalFunction(FALSE, 2, &divFun);
+	Value div = mkInternalFunction(FALSE, 2, &divFun);
 
-        static char* sym = "/";
-        addToNamespace(sym, VariableSymbol, div, env, namespace);
+	static char* sym = "/";
+	addToNamespace(sym, VariableSymbol, div, env, namespace);
 }
 
-FunctionResult positivePred(Value* success, char** error, Value* values, int length) {
+FunctionResult positivePred(Value* success, char** error, Value* values, int length, SyntaxEnv* env, Namespace* namespace) {
 	static char onlyNums[] = "positive? only works on numbers";
 	FunctionResult result;
 
@@ -728,7 +716,7 @@ void insertPositivePred(SyntaxEnv* env, Namespace* namespace) {
 	addToNamespace(sym, VariableSymbol, positive, env, namespace);
 }
 
-FunctionResult lessThan(Value* success, char** error, Value* values, int lrngth) {
+FunctionResult lessThan(Value* success, char** error, Value* values, int length, SyntaxEnv* env, Namespace* namespace) {
 	static char onlyNums[] = "< only works on numbers";
 	FunctionResult result;
 
@@ -738,122 +726,101 @@ FunctionResult lessThan(Value* success, char** error, Value* values, int lrngth)
 	} else {
 		success->type = AtomValue;
 		success->value.atom = values[0].value.number < values[1].value.number ? \
-		      PRIMITIVE_TRUE_INDEX : PRIMITIVE_FALSE_INDEX;
+				      PRIMITIVE_TRUE_INDEX : PRIMITIVE_FALSE_INDEX;
 		result = FunctionSuccess;
 	}
 
 	return result;
 }
 
-FunctionResult lessThanOrEqual(Value* success, char** error, Value* values, int lrngth) {
-        static char onlyNums[] = "<= only works on numbers";
-        FunctionResult result;
+FunctionResult lessThanOrEqual(Value* success, char** error, Value* values, int length, SyntaxEnv* env, Namespace* namespace) {
+	static char onlyNums[] = "<= only works on numbers";
+	FunctionResult result;
 
 
-        if (values[0].type != NumberValue || values[1].type != NumberValue) {
-                *error = onlyNums;
-                result = FunctionError;
-        } else {
-                success->type = AtomValue;
-                success->value.atom = values[0].value.number <= values[1].value.number ? \
-                      PRIMITIVE_TRUE_INDEX : PRIMITIVE_FALSE_INDEX;
-                result = FunctionSuccess;
-        }
+	if (values[0].type != NumberValue || values[1].type != NumberValue) {
+		*error = onlyNums;
+		result = FunctionError;
+	} else {
+		success->type = AtomValue;
+		success->value.atom = values[0].value.number <= values[1].value.number ? \
+				      PRIMITIVE_TRUE_INDEX : PRIMITIVE_FALSE_INDEX;
+		result = FunctionSuccess;
+	}
 
-        return result;
+	return result;
 }
 
-FunctionResult greaterThan(Value* success, char** error, Value* values, int lrngth) {
-        static char onlyNums[] = "> only works on numbers";
-        FunctionResult result;
+FunctionResult greaterThan(Value* success, char** error, Value* values, int length, SyntaxEnv* env, Namespace* namespace) {
+	static char onlyNums[] = "> only works on numbers";
+	FunctionResult result;
 
-        if (values[0].type != NumberValue || values[1].type != NumberValue) {
-                *error = onlyNums;
-                result = FunctionError;
-        } else {
-                success->type = AtomValue;
-                success->value.atom = values[0].value.number > values[1].value.number ? \
-                      PRIMITIVE_TRUE_INDEX : PRIMITIVE_FALSE_INDEX;
-                result = FunctionSuccess;
-        }
+	if (values[0].type != NumberValue || values[1].type != NumberValue) {
+		*error = onlyNums;
+		result = FunctionError;
+	} else {
+		success->type = AtomValue;
+		success->value.atom = values[0].value.number > values[1].value.number ? \
+				      PRIMITIVE_TRUE_INDEX : PRIMITIVE_FALSE_INDEX;
+		result = FunctionSuccess;
+	}
 
-        return result;
+	return result;
 }
 
-FunctionResult greaterThanOrEqual(Value* success, char** error, Value* values, int lrngth) {
-        static char onlyNums[] = ">= only works on numbers";
-        FunctionResult result;
+FunctionResult greaterThanOrEqual(Value* success, char** error, Value* values, int length, SyntaxEnv* env, Namespace* namespace) {
+	static char onlyNums[] = ">= only works on numbers";
+	FunctionResult result;
 
-        if (values[0].type != NumberValue || values[1].type != NumberValue) {
-                *error = onlyNums;
-                result = FunctionError;
-        } else {
-                success->type = AtomValue;
-                success->value.atom = values[0].value.number >= values[1].value.number ? \
-                      PRIMITIVE_TRUE_INDEX : PRIMITIVE_FALSE_INDEX;
-                result = FunctionSuccess;
-        }
+	if (values[0].type != NumberValue || values[1].type != NumberValue) {
+		*error = onlyNums;
+		result = FunctionError;
+	} else {
+		success->type = AtomValue;
+		success->value.atom = values[0].value.number >= values[1].value.number ? \
+				      PRIMITIVE_TRUE_INDEX : PRIMITIVE_FALSE_INDEX;
+		result = FunctionSuccess;
+	}
 
-        return result;
+	return result;
 }
 
 void insertComparisons(SyntaxEnv* env, Namespace* namespace) {
-        Value lt  = mkInternalFunction(FALSE, 2, &lessThan);
+	Value lt  = mkInternalFunction(FALSE, 2, &lessThan);
 	Value lte = mkInternalFunction(FALSE, 2, &lessThanOrEqual);
 	Value gt  = mkInternalFunction(FALSE, 2, &greaterThan);
 	Value gte = mkInternalFunction(FALSE, 2, &greaterThanOrEqual);
 
 	static char* lts  = "<";
-        static char* ltes = "<=";
+	static char* ltes = "<=";
 	static char* gts  = ">";
 	static char* gtes = ">=";
-        addToNamespace(lts, VariableSymbol, lt, env, namespace);
+	addToNamespace(lts, VariableSymbol, lt, env, namespace);
 	addToNamespace(ltes, VariableSymbol, lte, env, namespace);
 	addToNamespace(gts, VariableSymbol, gt, env, namespace);
 	addToNamespace(gtes, VariableSymbol, gte, env, namespace);
 }
 
-/* todo 
- * encode primitives
- * primitives: force (complete), lambda, define (complete)
- * hardcode fixed naming for lambda and define (maybe not neccessary
- * )
- * */
-int main() {
-        char lispCode[] = "(define fib (lambda (x) (if (> x 2) (+ (fib (- x 1)) (fib (- x 2))) 1))) (force (fib 10))";
-        SyntaxEnv    env = mkSyntaxEnv();
-	Namespace* namespace = mkBaseNamespace(&env);
-        SyntaxResult ast = buildAST(lispCode, &env);
-        
-        MacroDict* dict = predefinedMacros();
-        
-        showMacroDict(dict);
-        
-        MacroResult result = validMacroDict(dict);
-        showMacroResult(&result);
-        
-        if (ast.type == SyntaxSuccess) {
-                
-                result = runMacroDictOnAST(dict, &ast.value.success, &env);        
-                printf("ran macros: \n");
-                showMacroResult(&result);
-                showSyntaxResult(&ast);
-                showSyntaxEnv(&env);
+FunctionResult runSpy(Value* success, char** error, Value* values, int length, SyntaxEnv* env, Namespace* namespace) {
+	printf("Spy: \n");
+	showValue(&values[0], 1);
+	*success = values[1];
+	return FunctionSuccess;
+}
 
-		addIdentity(&env, namespace);
-		insertAdd(&env, namespace);
-		insertMul(&env, namespace);
-		insertSub(&env, namespace);
-		insertDiv(&env, namespace);
-		insertPositivePred(&env, namespace);
-		insertComparisons(&env, namespace);
-		printf("Global namespace: \n");
-		showSymbolDict(namespace->symbols, 1);
-		printf("Syntax env: \n");
-		showSyntaxEnv(&env);
-		
-		InterpretResult interpret = interpretAST(&ast.value.success, namespace, &env);
-		printf("Final result: \n\n");
-		showInterpretResult(&interpret, 0);
-	}       
-}  
+void insertSpy(SyntaxEnv* env, Namespace* namespace) {
+	Value spy = mkInternalFunction(FALSE, 2, &runSpy);
+	static char* name = "spy";
+	addToNamespace(name, VariableSymbol, spy, env, namespace);
+}
+
+void insertBasicFunctions(Namespace* namespace, SyntaxEnv* env) {
+	addIdentity(env, namespace);
+	insertAdd(env, namespace);
+	insertMul(env, namespace);
+	insertSub(env, namespace);
+	insertDiv(env, namespace);
+	insertPositivePred(env, namespace);
+	insertComparisons(env, namespace);
+	insertSpy(env, namespace);
+}

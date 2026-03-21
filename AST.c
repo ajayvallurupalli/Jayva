@@ -1,6 +1,7 @@
 #include "Tokenizer2.h"
 #include "Parser2.h"
 #include "AST.h"
+#include "Config.h"
 
 void showSyntax(const Syntax* syntax, int depth) {
 	int i;

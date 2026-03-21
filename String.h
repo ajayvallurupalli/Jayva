@@ -31,6 +31,7 @@ String mkString(char* data);
 String copyString(String* string);
 int getLength(String* string);
 char* getData(String* string);
+int checkEqualString(String a, String b);
 
 /* frees original memmory of original string*/
 void commandeerString(String* ship, String* boarding);

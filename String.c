@@ -149,6 +149,20 @@ void showStringWithDetails(String str) {
 	printf("String \"%s\" of size %d and capacity %d\n", str.data, str.length, str.capacity);
 }
 
+int checkEqualString(String a, String b) {
+	int result = 1;
+	int i;
+
+	if (a.length != b.length) result = 0;
+	else {
+		for (i = 0; i < a.length && result; i++) {
+			if (a.data[i] != b.data[i]) \
+				result = 0;
+		}
+	}
+
+	return result;
+}
 
 
 int _main() {

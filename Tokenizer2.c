@@ -5,6 +5,9 @@
 #include "LinkedList.h"
 #include "Config.h"
 
+
+#define isspace(ch) ((ch) == ' ' || (ch) == '\n' || (ch) == '\t')
+
 void showToken(const Token t) {
 	switch (t.type) {
 		case StringToken:
@@ -146,7 +149,7 @@ ParserIndex satisfyAtomOrTraitOrSymbol(ParserEnvironment* env, ParserIndex succe
 }
 
 int isSpaceOrNewline(ParserEnvironment* _env, void* _context, char ch) {
-	return ch == ' ' || ch == '\n';
+	return isspace(ch);
 }
 
 ParserIndex spaceOrNewline(ParserEnvironment* env, ParserIndex success, ParserIndex failure) {
